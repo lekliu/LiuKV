@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LiuKV - 内存 KV 存储管理</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+.container { display: flex; height: 100vh; }
+.sidebar { width: 280px; background: #1e293b; border-right: 1px solid #334155; padding: 20px; overflow-y: auto; }
+.main { flex: 1; padding: 24px; overflow-y: auto; }
+h1 { font-size: 1.25rem; margin-bottom: 20px; color: #60a5fa; }
+h2 { font-size: 1.1rem; margin-bottom: 16px; color: #94a3b8; }
+.btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; transition: all 0.2s; }
+.btn-primary { background: #3b82f6; color: white; }
+.btn-primary:hover { background: #2563eb; }
+.btn-danger { background: #ef4444; color: white; }
+.btn-danger:hover { background: #dc2626; }
+.btn-secondary { background: #475569; color: white; }
+.btn-secondary:hover { background: #64748b; }
+.btn-sm { padding: 4px 8px; font-size: 12px; }
+.input { width: 100%; padding: 8px 12px; background: #0f172a; border: 1px solid #334155; border-radius: 6px; color: #e2e8f0; font-size: 14px; }
+.input:focus { outline: none; border-color: #3b82f6; }
+.textarea { width: 100%; min-height: 120px; padding: 8px 12px; background: #0f172a; border: 1px solid #334155; border-radius: 6px; color: #e2e8f0; font-family: monospace; font-size: 13px; resize: vertical; }
+.card { background: #1e293b; border-radius: 8px; padding: 20px; margin-bottom: 20px; border: 1px solid #334155; }
+.ns-item { padding: 10px 12px; border-radius: 6px; cursor: pointer; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; transition: background 0.2s; }
+.ns-item:hover { background: #334155; }
+.ns-item.active { background: #3b82f6; color: white; }
+.ns-item .count { font-size: 12px; opacity: 0.7; }
+.key-list { max-height: 400px; overflow-y: auto; }
+.key-item { padding: 10px 12px; background: #0f172a; border-radius: 6px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+.key-item:hover { background: #1e3a5f; }
+.key-actions { display: flex; gap: 6px; }
+.form-group { margin-bottom: 16px; }
+.form-group label { display: block; margin-bottom: 6px; font-size: 14px; color: #94a3b8; }
+.row { display: flex; gap: 12px; }
+.row > * { flex: 1; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+.badge-green { background: #065f46; color: #6ee7b7; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.stat-card { background: #0f172a; padding: 16px; border-radius: 8px; text-align: center; }
+.stat-value { font-size: 2rem; font-weight: bold; color: #60a5fa; }
+.stat-label { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+.empty { text-align: center; padding: 40px; color: #64748b; }
+.token-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.token-box { background: #1e293b; padding: 32px; border-radius: 12px; width: 400px; max-width: 90vw; }
+.mb-4 { margin-bottom: 16px; }
+.mt-4 { margin-top: 16px; }
+.w-full { width: 100%; }
+.search-box { margin-bottom: 16px; }
+.json-preview { background: #0f172a; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; }
+.loading { opacity: 0.7; pointer-events: none; }
+.error { color: #f87171; padding: 8px 12px; background: rgba(248,113,113,0.1); border-radius: 6px; margin-bottom: 16px; }
+.success { color: #4ade80; padding: 8px 12px; background: rgba(74,222,128,0.1); border-radius: 6px; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="token-modal" v-if="needsAuth && !token">
+    <div class="token-box">
+      <h2 class="mb-4">🔐 请输入访问 Token</h2>
+      <p class="mb-4" style="color: #94a3b8; font-size: 14px;">
+        该服务需要认证，请联系管理员获取 Token
+      </p>
+      <input type="password" class="input mb-2" v-model="tokenInput" placeholder="AUTH_TOKEN" @keyup.enter="setToken">
+      <div v-if="authError" class="error mb-4">{{ authError }}</div>
+      <button class="btn btn-primary w-full" @click="setToken">确认</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="sidebar">
+      <h1>📦 LiuKV</h1>
+
+      <div class="mb-4">
+        <input type="text" class="input" v-model="newNamespace" placeholder="新建 Namespace" @keyup.enter="createNamespace">
+        <button class="btn btn-primary btn-sm mt-4 w-full" @click="createNamespace">+ 创建 Namespace</button>
+      </div>
+
+      <div v-if="error" class="error mb-4">{{ error }}</div>
+      <div v-if="success" class="success mb-4">{{ success }}</div>
+
+      <h2>Namespaces ({{ namespaces.length }})</h2>
+      <div v-for="ns in namespaces" :key="ns" class="ns-item" :class="{active: currentNamespace === ns}" @click="selectNamespace(ns)">
+        <span>{{ ns }}</span>
+        <button class="btn btn-danger btn-sm" @click.stop="deleteNamespace(ns)">×</button>
+      </div>
+      <div v-if="namespaces.length === 0" class="empty" style="padding: 20px;">
+        暂无 Namespace
+      </div>
+    </div>
+
+    <div class="main">
+      <div class="card" v-if="currentNamespace">
+        <h2>📊 {{ currentNamespace }} - 统计信息</h2>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-value">{{ stats.keys || 0 }}</div>
+            <div class="stat-label">Keys 数量</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{{ stats.usedMB?.toFixed(4) || '0.0000' }}</div>
+            <div class="stat-label">已用内存 (MB)</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{{ stats.maxMB || 0 }}</div>
+            <div class="stat-label">最大内存 (MB)</div>
+          </div>
+        </div>
+        <button class="btn btn-danger btn-sm mt-4" @click="clearNamespace">清空当前 Namespace</button>
+      </div>
+
+      <div class="card" v-if="currentNamespace">
+        <h2>✏️ 写入数据</h2>
+        <div class="row">
+          <div class="form-group">
+            <label>Key</label>
+            <input type="text" class="input" v-model="writeKey" placeholder="键名">
+          </div>
+          <div class="form-group">
+            <label>TTL (秒，可选)</label>
+            <input type="number" class="input" v-model.number="writeTTL" placeholder="0 = 永不过期">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Value (字符串)</label>
+          <textarea class="textarea" v-model="writeValue" placeholder="值内容"></textarea>
+        </div>
+        <button class="btn btn-primary" @click="writeData">写入</button>
+      </div>
+
+      <div class="card" v-if="currentNamespace">
+        <h2>🔍 浏览数据</h2>
+        <div class="search-box">
+          <input type="text" class="input" v-model="searchPrefix" placeholder="按前缀搜索 Key" @input="loadKeys">
+        </div>
+        <div class="key-list" v-if="keys.length > 0">
+          <div v-for="key in keys" :key="key" class="key-item" @click="viewKey(key)">
+            <span>{{ key }}</span>
+            <div class="key-actions">
+              <button class="btn btn-secondary btn-sm" @click.stop="viewKey(key)">查看</button>
+              <button class="btn btn-danger btn-sm" @click.stop="deleteKey(key)">删除</button>
+            </div>
+          </div>
+        </div>
+        <div v-else class="empty">
+          暂无数据
+        </div>
+      </div>
+
+      <div class="card" v-if="viewingKey">
+        <h2>👁️ 查看: {{ viewingKey }}</h2>
+        <div class="json-preview">{{ viewingValue }}</div>
+        <button class="btn btn-secondary btn-sm mt-4" @click="viewingKey = null">关闭</button>
+      </div>
+
+      <div class="card" v-if="!currentNamespace">
+        <div class="empty">
+          <h2>👋 欢迎使用 LiuKV</h2>
+          <p class="mt-4">请从左侧选择或创建一个 Namespace 开始使用</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const { createApp, ref, onMounted } = Vue;
+
+createApp({
+  setup() {
+    const API_BASE = '/kv';
+    const needsAuth = ref(false);
+    const token = ref('');
+    const tokenInput = ref('');
+    const authError = ref('');
+    const namespaces = ref([]);
+    const currentNamespace = ref('');
+    const newNamespace = ref('');
+    const stats = ref({});
+    const keys = ref([]);
+    const searchPrefix = ref('');
+    const writeKey = ref('');
+    const writeValue = ref('');
+    const writeTTL = ref(0);
+    const viewingKey = ref('');
+    const viewingValue = ref('');
+    const error = ref('');
+    const success = ref('');
+
+    const getHeaders = () => {
+      const headers = { 'Content-Type': 'application/json' };
+      if (token.value) {
+        headers['X-KV-Token'] = token.value;
+      }
+      return headers;
+    };
+
+    const clearMessages = () => {
+      error.value = '';
+      success.value = '';
+    };
+
+    const setToken = () => {
+      token.value = tokenInput.value;
+      localStorage.setItem('liukv_token', token.value);
+      authError.value = '';
+      clearMessages();
+      loadNamespaces();
+    };
+
+    const loadNamespaces = async () => {
+      clearMessages();
+      try {
+        const res = await fetch(`${API_BASE}/_admin/namespaces`, { headers: getHeaders() });
+        if (res.status === 401) {
+          needsAuth.value = true;
+          authError.value = '密码错误，请重新输入';
+          token.value = '';
+          localStorage.removeItem('liukv_token');
+          return;
+        }
+        needsAuth.value = false;
+        authError.value = '';
+        const data = await res.json();
+        namespaces.value = data.namespaces || [];
+      } catch (e) {
+        console.error('Failed to load namespaces:', e);
+        error.value = '加载 Namespace 失败';
+      }
+    };
+
+    const createNamespace = async () => {
+      if (!newNamespace.value.trim()) return;
+
+      clearMessages();
+      const nsName = newNamespace.value.trim();
+
+      try {
+        const res = await fetch(`${API_BASE}/_admin/namespaces/${nsName}`, {
+          method: 'POST',
+          headers: getHeaders()
+        });
+
+        if (!res.ok) {
+          throw new Error('创建失败');
+        }
+
+        newNamespace.value = '';
+        await loadNamespaces();
+        currentNamespace.value = nsName;
+        loadStats();
+        loadKeys();
+        success.value = `Namespace "${nsName}" 创建成功`;
+        setTimeout(() => { success.value = ''; }, 3000);
+      } catch (e) {
+        console.error('Failed to create namespace:', e);
+        error.value = '创建 Namespace 失败: ' + e.message;
+      }
+    };
+
+    const selectNamespace = (ns) => {
+      clearMessages();
+      currentNamespace.value = ns;
+      loadStats();
+      loadKeys();
+    };
+
+    const deleteNamespace = async (ns) => {
+      if (!confirm(`确定要删除 Namespace "${ns}" 吗？`)) return;
+
+      clearMessages();
+      try {
+        await fetch(`${API_BASE}/_admin/namespaces/${ns}`, {
+          method: 'DELETE',
+          headers: getHeaders()
+        });
+        if (currentNamespace.value === ns) {
+          currentNamespace.value = '';
+        }
+        await loadNamespaces();
+        success.value = `Namespace "${ns}" 已删除`;
+        setTimeout(() => { success.value = ''; }, 3000);
+      } catch (e) {
+        console.error('Failed to delete namespace:', e);
+        error.value = '删除 Namespace 失败';
+      }
+    };
+
+    const clearNamespace = async () => {
+      if (!confirm(`确定要清空 "${currentNamespace.value}" 的所有数据吗？`)) return;
+
+      clearMessages();
+      try {
+        await fetch(`${API_BASE}/${currentNamespace.value}/_clear`, {
+          method: 'DELETE',
+          headers: getHeaders()
+        });
+        loadStats();
+        loadKeys();
+        success.value = 'Namespace 已清空';
+        setTimeout(() => { success.value = ''; }, 3000);
+      } catch (e) {
+        console.error('Failed to clear namespace:', e);
+        error.value = '清空 Namespace 失败';
+      }
+    };
+
+    const loadStats = async () => {
+      if (!currentNamespace.value) return;
+      try {
+        const res = await fetch(`${API_BASE}/${currentNamespace.value}/_stats`, { headers: getHeaders() });
+        stats.value = await res.json();
+      } catch (e) {
+        console.error('Failed to load stats:', e);
+      }
+    };
+
+    const loadKeys = async () => {
+      if (!currentNamespace.value) return;
+      clearMessages();
+      try {
+        const url = `${API_BASE}/${currentNamespace.value}/_keys${searchPrefix.value ? `?prefix=${searchPrefix.value}` : ''}`;
+        const res = await fetch(url, { headers: getHeaders() });
+        const data = await res.json();
+        keys.value = data.keys || [];
+      } catch (e) {
+        console.error('Failed to load keys:', e);
+        error.value = '加载键列表失败';
+      }
+    };
+
+    const writeData = async () => {
+      if (!writeKey.value.trim()) {
+        alert('请输入 Key');
+        return;
+      }
+
+      clearMessages();
+      const url = `${API_BASE}/${currentNamespace.value}/${writeKey.value.trim()}${writeTTL.value > 0 ? `?ttl=${writeTTL.value}` : ''}`;
+
+      try {
+        const res = await fetch(url, {
+          method: 'PUT',
+          headers: getHeaders(),
+          body: writeValue.value
+        });
+
+        if (!res.ok) {
+          throw new Error('写入失败');
+        }
+
+        writeKey.value = '';
+        writeValue.value = '';
+        writeTTL.value = 0;
+        loadStats();
+        loadKeys();
+        success.value = '数据写入成功';
+        setTimeout(() => { success.value = ''; }, 3000);
+      } catch (e) {
+        console.error('Failed to write data:', e);
+        error.value = '写入数据失败: ' + e.message;
+      }
+    };
+
+    const viewKey = async (key) => {
+      clearMessages();
+      try {
+        const res = await fetch(`${API_BASE}/${currentNamespace.value}/${key}`, { headers: getHeaders() });
+        viewingValue.value = await res.text();
+        viewingKey.value = key;
+      } catch (e) {
+        console.error('Failed to view key:', e);
+        error.value = '查看数据失败';
+      }
+    };
+
+    const deleteKey = async (key) => {
+      if (!confirm(`确定要删除 Key "${key}" 吗？`)) return;
+
+      clearMessages();
+      try {
+        await fetch(`${API_BASE}/${currentNamespace.value}/${key}`, {
+          method: 'DELETE',
+          headers: getHeaders()
+        });
+        loadStats();
+        loadKeys();
+        success.value = 'Key 已删除';
+        setTimeout(() => { success.value = ''; }, 3000);
+      } catch (e) {
+        console.error('Failed to delete key:', e);
+        error.value = '删除 Key 失败';
+      }
+    };
+
+    onMounted(() => {
+      const savedToken = localStorage.getItem('liukv_token');
+      if (savedToken) {
+        token.value = savedToken;
+      }
+      loadNamespaces();
+    });
+
+    return {
+      needsAuth, token, tokenInput, setToken,
+      namespaces, currentNamespace, newNamespace,
+      createNamespace, selectNamespace, deleteNamespace, clearNamespace,
+      stats, keys, searchPrefix, loadKeys,
+      writeKey, writeValue, writeTTL, writeData,
+      viewingKey, viewingValue, viewKey, deleteKey,
+      error, success
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

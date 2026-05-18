@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  liukv:
+    build: .
+    container_name: liukv
+    ports:
+      - "8787:8787"
+    environment:
+      - PORT=8787
+      - AUTH_TOKEN=${AUTH_TOKEN:-your-secret-token-here}
+      - MAX_MEMORY_MB=128
+      - ENABLE_CORS=true
+      - CORS_ORIGIN=*
+    restart: unless-stopped
+    networks:
+      - default
+
+networks:
+  default:
+    external:
+      name: nginx_mysql_default
