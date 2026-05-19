@@ -2,6 +2,7 @@ package kv
 
 import (
 	"container/list"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -52,33 +53,90 @@ func (s *Store) Get(key string) (string, bool) {
 	return it.value, true
 }
 
+func (s *Store) GetMulti(keys []string) map[string]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make(map[string]string)
+	now := time.Now()
+
+	for _, key := range keys {
+		elem, ok := s.data[key]
+		if !ok {
+			continue
+		}
+
+		it := elem.Value.(*item)
+		if it.hasExpiry && now.After(it.expireAt) {
+			continue
+		}
+
+		result[key] = it.value
+	}
+
+	return result
+}
+
+func (s *Store) GetAllWithPrefix(prefix string) map[string]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make(map[string]string)
+	now := time.Now()
+
+	for k, elem := range s.data {
+		it := elem.Value.(*item)
+		if it.hasExpiry && now.After(it.expireAt) {
+			continue
+		}
+		if prefix == "" || (len(k) >= len(prefix) && k[:len(prefix)] == prefix) {
+			result[k] = it.value
+		}
+	}
+
+	return result
+}
+
 func (s *Store) Put(key, value string, ttlSeconds int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.putInternal(key, value, ttlSeconds)
+}
+
+func (s *Store) PutMulti(items map[string]string, ttlSeconds int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for key, value := range items {
+		s.putInternal(key, value, ttlSeconds)
+	}
+}
+
+func (s *Store) Incr(key string, amount int64) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var currentValue int64 = 0
+
 	if elem, ok := s.data[key]; ok {
-		oldItem := elem.Value.(*item)
-		s.usedBytes -= int64(len(oldItem.value))
-		s.lruList.Remove(elem)
-		delete(s.data, key)
+		it := elem.Value.(*item)
+		
+		if it.hasExpiry && time.Now().After(it.expireAt) {
+			s.deleteElement(elem)
+		} else {
+			if val, err := strconv.ParseInt(it.value, 10, 64); err == nil {
+				currentValue = val
+			}
+			s.deleteElement(elem)
+		}
 	}
 
-	newItem := &item{
-		key:        key,
-		value:      value,
-		lastAccess: time.Now(),
-	}
+	newValue := currentValue + amount
+	newValueStr := strconv.FormatInt(newValue, 10)
+	s.putInternal(key, newValueStr, 0)
 
-	if ttlSeconds > 0 {
-		newItem.expireAt = time.Now().Add(time.Duration(ttlSeconds) * time.Second)
-		newItem.hasExpiry = true
-	}
-
-	elem := s.lruList.PushFront(newItem)
-	s.data[key] = elem
-	s.usedBytes += int64(len(value))
-
-	s.evictIfNeeded()
+	return newValue, nil
 }
 
 func (s *Store) Delete(key string) bool {
@@ -148,6 +206,32 @@ func (s *Store) CleanExpired() int {
 	}
 
 	return expiredCount
+}
+
+func (s *Store) putInternal(key, value string, ttlSeconds int) {
+	if elem, ok := s.data[key]; ok {
+		oldItem := elem.Value.(*item)
+		s.usedBytes -= int64(len(oldItem.value))
+		s.lruList.Remove(elem)
+		delete(s.data, key)
+	}
+
+	newItem := &item{
+		key:        key,
+		value:      value,
+		lastAccess: time.Now(),
+	}
+
+	if ttlSeconds > 0 {
+		newItem.expireAt = time.Now().Add(time.Duration(ttlSeconds) * time.Second)
+		newItem.hasExpiry = true
+	}
+
+	elem := s.lruList.PushFront(newItem)
+	s.data[key] = elem
+	s.usedBytes += int64(len(value))
+
+	s.evictIfNeeded()
 }
 
 func (s *Store) deleteElement(elem *list.Element) {

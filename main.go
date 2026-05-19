@@ -43,9 +43,10 @@ func main() {
 
 	api.GET("/:namespace/_stats", kvHandler.GetStats)
 	api.GET("/:namespace/_keys", kvHandler.ListKeys)
+	api.GET("/:namespace/_all", kvHandler.GetAll)
+	api.POST("/:namespace/_multi/get", kvHandler.GetMulti)
 	api.DELETE("/:namespace/_clear", kvHandler.Clear)
-	api.POST("/:namespace/_batch/get", kvHandler.BatchGet)
-	api.POST("/:namespace/_batch/put", kvHandler.BatchPut)
+	api.POST("/:namespace/_incr/:key", kvHandler.Incr)
 
 	api.GET("/:namespace/:key", kvHandler.Get)
 	api.PUT("/:namespace/:key", kvHandler.Put)

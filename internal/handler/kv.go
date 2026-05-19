@@ -90,6 +90,39 @@ func (h *KVHandler) ListKeys(c *gin.Context) {
 	})
 }
 
+func (h *KVHandler) GetAll(c *gin.Context) {
+	namespace := c.Param("namespace")
+	prefix := c.Query("prefix")
+
+	store := h.nm.GetNamespace(namespace)
+	data := store.GetAllWithPrefix(prefix)
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":  data,
+		"count": len(data),
+	})
+}
+
+func (h *KVHandler) GetMulti(c *gin.Context) {
+	namespace := c.Param("namespace")
+
+	var req struct {
+		Keys []string `json:"keys"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid request body",
+		})
+		return
+	}
+
+	store := h.nm.GetNamespace(namespace)
+	result := store.GetMulti(req.Keys)
+
+	c.JSON(http.StatusOK, result)
+}
+
 func (h *KVHandler) Clear(c *gin.Context) {
 	namespace := c.Param("namespace")
 
@@ -157,54 +190,28 @@ func (h *KVHandler) GetAllStats(c *gin.Context) {
 	c.JSON(http.StatusOK, stats)
 }
 
-func (h *KVHandler) BatchGet(c *gin.Context) {
+func (h *KVHandler) Incr(c *gin.Context) {
 	namespace := c.Param("namespace")
+	key := c.Param("key")
 
-	var req struct {
-		Keys []string `json:"keys"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request body",
-		})
-		return
+	amountStr := c.DefaultQuery("amount", "1")
+	amount, err := strconv.ParseInt(amountStr, 10, 64)
+	if err != nil {
+		amount = 1
 	}
 
 	store := h.nm.GetNamespace(namespace)
-	result := make(map[string]interface{})
-
-	for _, key := range req.Keys {
-		if value, exists := store.Get(key); exists {
-			result[key] = value
-		} else {
-			result[key] = nil
-		}
-	}
-
-	c.JSON(http.StatusOK, result)
-}
-
-func (h *KVHandler) BatchPut(c *gin.Context) {
-	namespace := c.Param("namespace")
-
-	var req map[string]string
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request body",
+	newValue, err := store.Incr(key, amount)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to increment counter",
 		})
 		return
-	}
-
-	store := h.nm.GetNamespace(namespace)
-
-	for key, value := range req {
-		store.Put(key, value, 0)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"count":   len(req),
+		"key":     key,
+		"value":   newValue,
 	})
 }
