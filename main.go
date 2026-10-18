@@ -9,6 +9,7 @@ import (
 	"liukv/internal/handler"
 	"liukv/internal/kv"
 	"liukv/internal/middleware"
+	"liukv/internal/ui"
 )
 
 func main() {
@@ -25,11 +26,16 @@ func main() {
 
 	nm := kv.NewNamespaceManager(cfg.MaxMemoryMB)
 	kvHandler := handler.NewKVHandler(nm)
+	authHandler := handler.NewAuthHandler(cfg.AuthToken)
 
 	r.GET("/health", handler.Health)
-	r.StaticFile("/", "./public/index.html")
-	r.StaticFile("/ui", "./public/index.html")
-	r.Static("/static", "./public/static")
+
+	// 专门的认证状态检查与验证接口（无需 Token 即可访问）
+	authApi := r.Group("/api/auth")
+	{
+		authApi.GET("/status", authHandler.GetAuthStatus)
+		authApi.POST("/verify", authHandler.VerifyToken)
+	}
 
 	api := r.Group("/kv")
 	if cfg.AuthToken != "" {
@@ -51,6 +57,9 @@ func main() {
 	api.GET("/:namespace/:key", kvHandler.Get)
 	api.PUT("/:namespace/:key", kvHandler.Put)
 	api.DELETE("/:namespace/:key", kvHandler.Delete)
+
+	// 注册前端 UI (go:embed 嵌入)
+	ui.RegisterUIRoutes(r)
 
 	log.Printf("LiuKV server starting on port %s", cfg.Port)
 	log.Printf("Auth enabled: %v", cfg.AuthToken != "")

@@ -2,14 +2,14 @@ version: '3.8'
 
 services:
   liukv:
-    build: .
+    image: liukv:latest
     container_name: liukv
     ports:
       - "8787:8787"
     environment:
       - PORT=8787
-      - AUTH_TOKEN=${AUTH_TOKEN:-your-secret-token-here}
-      - MAX_MEMORY_MB=128
+      - AUTH_TOKEN=KV123456
+      - MAX_MEMORY_MB=256
       - ENABLE_CORS=true
       - CORS_ORIGIN=*
     restart: unless-stopped
